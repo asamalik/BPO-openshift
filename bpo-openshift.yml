@@ -1,0 +1,144 @@
+---
+kind: Template
+apiVersion: v1
+metadata:
+  name: bpo
+  annotations:
+    description: Build Pipeline Overview UI for the Modularity project
+    tags: bpo
+labels:
+  template: bpo
+  group: bpo
+  version: 1.0.0
+objects:
+- kind: Service
+  apiVersion: v1
+  metadata:
+    name: "bpo-web-ui-service"
+    annotations:
+      service.alpha.openshift.io/dependencies: '[{"name":"elasticsearch", "namespace":"", "kind":"Service"}]'
+  spec:
+    ports:
+    - name: "bpo-web-ui"
+      port: 5000
+      targetPort: 5000
+    selector:
+      name: "bpo-web-ui-service"
+- kind: Service
+  apiVersion: v1
+  metadata:
+    name: "elasticsearch"
+  spec:
+    ports:
+      - name: "elasticsearch"
+        protocol: "TCP"
+        port: 9200
+        targetPort: 9200
+        nodePort: 0
+    selector:
+      name: "elasticsearch"
+    portalIP: ""
+    type: "ClusterIP"
+    sessionAffinity: "None"
+  status:
+    loadBalancer: {}
+- kind: Route
+  apiVersion: v1
+  metadata:
+    name: "bpo-web-ui-route"
+  spec:
+    host: ""
+    to:
+      kind: Service
+      name: "bpo-web-ui-service"
+- kind: ImageStream
+  apiVersion: v1
+  metadata:
+    name: "bpo-web-ui-image"
+  spec:
+    dockerImageRepository: "asamalik/bpo-web-ui"
+  tags:
+    - name: "latest"
+- kind: ImageStream
+  apiVersion: v1
+  metadata:
+    name: "elasticsearch"
+  spec:
+    dockerImageRepository: "elasticsearch"
+  tags:
+    - name: "latest"
+- kind: DeploymentConfig
+  apiVersion: v1
+  metadata:
+    name: "bpo-web-ui-deployment"
+  spec:
+    selector:
+      name: "bpo-web-ui-service"
+    stragegy:
+      type: "Rolling"
+    triggers:
+      - type: "ImageChange"
+        imageChangeParams:
+          automatic: true
+          containerNames:
+            - "bpo-web-ui-container"
+          from:
+            kind: "ImageStreamTag"
+            name: "bpo-web-ui-image:latest"
+    replicas: 1
+    template:
+      metadata:
+        name: "bpo-web-ui-hahaha"
+        labels:
+          name: "bpo-web-ui-service"
+      spec:
+        containers:
+          - name: "bpo-web-ui-container"
+            image: "bpo-web-ui-image:latest"
+            ports:
+              - containerPort: 5000
+- kind: DeploymentConfig
+  apiVersion: v1
+  metadata:
+    name: "elasticsearch"
+  spec:
+    selector:
+      name: "elasticsearch"
+    strategy:
+      type: "Rolling"
+    triggers:
+      - type: "ImageChange"
+        imageChangeParams:
+          automatic: true
+          containerNames:
+            - "elasticsearch"
+          from:
+            kind: "ImageStreamTag"
+            name: "elasticsearch:latest"
+    replicas: 1
+    template:
+      metadata:
+        name: "elasticsearch"
+        labels:
+          name: "elasticsearch"
+      spec:
+        containers:
+          - name: "elasticsearch"
+            image: "elasticsearch:latest"
+            ports:
+              - containerPort: 5000
+            volumeMounts:
+              - mountPath: /usr/share/elasticsearch/data/elasticsearch
+                name: data
+        volumes:
+          - name: data
+            emptyDir: {}
+- kind: Pod
+  apiVersion: v1
+  metadata:
+    name: "bpo-updater-mappings"
+  spec:
+    containers:
+      - name: "bpo-updater-mappings"
+        image: "docker.io/asamalik/bpo-updater-mappings"
+    restartPolicy: Never
