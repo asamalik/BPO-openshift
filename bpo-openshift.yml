@@ -138,9 +138,17 @@ objects:
             volumeMounts:
               - mountPath: /usr/share/elasticsearch/data/elasticsearch
                 name: data
+              - mountPath: /usr/share/elasticsearch/config
+                name: config
         volumes:
           - name: data
             emptyDir: {}
+          - name: config
+            configMap:
+              name: elasticsearch-config
+              items:
+                - key: elasticsearch.yml
+                  path: elasticsearch.yml
 - kind: DeploymentConfig
   apiVersion: v1
   metadata:
@@ -189,7 +197,17 @@ objects:
     containers:
       - name: "bpo-updater-mappings"
         image: "docker.io/asamalik/bpo-updater-mappings"
+        imagePullPolicy: Always
     restartPolicy: Never
+- kind: ConfigMap
+  apiVersion: v1
+  metadata:
+    name: elasticsearch-config
+  data:
+    elasticsearch.yml: |
+      network.host: 0.0.0.0
+      # this might have some security issues: https://www.elastic.co/guide/en/elasticsearch/reference/current/modules-scripting.html#modules-scripting
+      script.engine.groovy.inline.aggs: on
 - kind: ConfigMap
   apiVersion: v1
   metadata:
