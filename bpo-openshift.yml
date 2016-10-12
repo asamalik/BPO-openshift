@@ -62,6 +62,14 @@ objects:
 - kind: ImageStream
   apiVersion: v1
   metadata:
+    name: "bpo-updater-fedmsg"
+  spec:
+    dockerImageRepository: "asamalik/bpo-updater-fedmsg"
+  tags:
+    - name: "latest"
+- kind: ImageStream
+  apiVersion: v1
+  metadata:
     name: "elasticsearch"
   spec:
     dockerImageRepository: "elasticsearch"
@@ -126,13 +134,53 @@ objects:
           - name: "elasticsearch"
             image: "elasticsearch:latest"
             ports:
-              - containerPort: 5000
+              - containerPort: 9200
             volumeMounts:
               - mountPath: /usr/share/elasticsearch/data/elasticsearch
                 name: data
         volumes:
           - name: data
             emptyDir: {}
+- kind: DeploymentConfig
+  apiVersion: v1
+  metadata:
+    name: "bpo-updater-fedmsg"
+  spec:
+    selector:
+      name: "bpo-updater-fedmsg"
+    strategy:
+      type: "Rolling"
+    triggers:
+      - type: "ImageChange"
+        imageChangeParams:
+          automatic: true
+          containerNames:
+            - "bpo-updater-fedmsg"
+          from:
+            kind: "ImageStreamTag"
+            name: "bpo-updater-fedmsg:latest"
+    replicas: 1
+    template:
+      metadata:
+        name: "bpo-updater-fedmsg"
+        labels:
+          name: "bpo-updater-fedmsg"
+      spec:
+        containers:
+          - name: "bpo-updater-fedmsg"
+            image: "bpo-updater-fedmsg:latest"
+            volumeMounts:
+              - mountPath: /etc/fedmsg.d/
+                name: configuration-volume
+        volumes:
+          - name: configuration-volume
+            configMap:
+              name: fedmsg-config
+              items:
+                - key: endpoits.py
+                  path: endpoits.py
+                - key: ssl.py
+                  path: ssl.py
 - kind: Pod
   apiVersion: v1
   metadata:
@@ -142,3 +190,61 @@ objects:
       - name: "bpo-updater-mappings"
         image: "docker.io/asamalik/bpo-updater-mappings"
     restartPolicy: Never
+- kind: ConfigMap
+  apiVersion: v1
+  metadata:
+    name: fedmsg-config
+  data:
+    endpoits.py: |
+      config = dict(
+          # This is a dict of possible addresses from which fedmsg can send
+          # messages.  fedmsg.init(...) requires that a 'name' argument be passed
+          # to it which corresponds with one of the keys in this dict.
+          endpoints={
+              # Listening to the staging infra + the dev instance.
+              "fedmod": [
+                  "tcp://stg.fedoraproject.org:9940",
+                  "tcp://modularity.fedorainfracloud.org:4001",
+              ],
+          },
+      )
+    ssl.py: |
+      import os
+      import socket
+      SEP = os.path.sep
+      here = os.getcwd()
+      config = dict(
+          sign_messages=False,
+          validate_signatures=False,
+          # Use these implementations to sign and validate messages
+          crypto_backend='x509',
+          crypto_validate_backends=['x509'],
+          ssldir="/etc/pki/fedmsg",
+          crl_location="https://fedoraproject.org/fedmsg/crl.pem",
+          crl_cache="/var/run/fedmsg/crl.pem",
+          crl_cache_expiry=10,
+          ca_cert_location="https://fedoraproject.org/fedmsg/ca.crt",
+          ca_cert_cache="/var/run/fedmsg/ca.crt",
+          ca_cert_cache_expiry=0,  # Never expires
+          certnames={
+              # In prod/stg, map hostname to the name of the cert in ssldir.
+              # Unfortunately, we can't use socket.getfqdn()
+              #"app01.stg": "app01.stg.phx2.fedoraproject.org",
+          },
+          # A mapping of fully qualified topics to a list of cert names for which
+          # a valid signature is to be considered authorized.  Messages on topics not
+          # listed here are considered automatically authorized.
+          routing_policy={
+              # Only allow announcements from production if they're signed by a
+              # certain certificate.
+              "org.fedoraproject.prod.announce.announcement": [
+                  "announce-lockbox.phx2.fedoraproject.org",
+              ],
+          },
+          # Set this to True if you want messages to be dropped that aren't
+          # explicitly whitelisted in the routing_policy.
+          # When this is False, only messages that have a topic in the routing_policy
+          # but whose cert names aren't in the associated list are dropped; messages
+          # whose topics do not appear in the routing_policy are not dropped.
+          routing_nitpicky=False,
+      )
