@@ -1,0 +1,284 @@
+---
+kind: Template
+apiVersion: v1
+metadata:
+  name: bpo-devel
+  annotations:
+    description: Build Pipeline Overview UI for the Modularity project
+    tags: bpo
+labels:
+  template: bpo
+  group: bpo
+  version: 1.0.0
+objects:
+- kind: Service
+  apiVersion: v1
+  metadata:
+    name: "bpo-web-ui-service"
+    annotations:
+      service.alpha.openshift.io/dependencies: '[{"name":"elasticsearch", "namespace":"", "kind":"Service"}]'
+  spec:
+    ports:
+    - name: "bpo-web-ui"
+      port: 5000
+      targetPort: 5000
+    selector:
+      name: "bpo-web-ui-service"
+- kind: Service
+  apiVersion: v1
+  metadata:
+    name: "elasticsearch"
+  spec:
+    ports:
+      - name: "elasticsearch"
+        protocol: "TCP"
+        port: 9200
+        targetPort: 9200
+        nodePort: 0
+    selector:
+      name: "elasticsearch"
+    portalIP: ""
+    type: "ClusterIP"
+    sessionAffinity: "None"
+  status:
+    loadBalancer: {}
+- kind: Route
+  apiVersion: v1
+  metadata:
+    name: "bpo-web-ui-route"
+  spec:
+    host: ""
+    to:
+      kind: Service
+      name: "bpo-web-ui-service"
+- kind: ImageStream
+  apiVersion: v1
+  metadata:
+    name: "bpo-web-ui-image"
+  spec:
+    dockerImageRepository: "asamalik/bpo-web-ui"
+  tags:
+    - name: "latest"
+- kind: ImageStream
+  apiVersion: v1
+  metadata:
+    name: "bpo-updater-fedmsg"
+  spec:
+    dockerImageRepository: "asamalik/bpo-updater-fedmsg"
+  tags:
+    - name: "latest"
+- kind: ImageStream
+  apiVersion: v1
+  metadata:
+    name: "elasticsearch"
+  spec:
+    dockerImageRepository: "elasticsearch"
+  tags:
+    - name: "latest"
+- kind: DeploymentConfig
+  apiVersion: v1
+  metadata:
+    name: "bpo-web-ui-deployment"
+  spec:
+    selector:
+      name: "bpo-web-ui-service"
+    stragegy:
+      type: "Rolling"
+    triggers:
+      - type: "ImageChange"
+        imageChangeParams:
+          automatic: true
+          containerNames:
+            - "bpo-web-ui-container"
+          from:
+            kind: "ImageStreamTag"
+            name: "bpo-web-ui-image:latest"
+    replicas: 1
+    template:
+      metadata:
+        name: "bpo-web-ui-hahaha"
+        labels:
+          name: "bpo-web-ui-service"
+      spec:
+        containers:
+          - name: "bpo-web-ui-container"
+            image: "bpo-web-ui-image:latest"
+            ports:
+              - containerPort: 5000
+            volumeMounts:
+              - mountPath: /code
+                name: bpo-git
+        volumes:
+          - name: bpo-git
+            hostPath:
+              path: "${BPO_LOCAL_REPO}/bpo-web-ui"
+- kind: DeploymentConfig
+  apiVersion: v1
+  metadata:
+    name: "elasticsearch"
+  spec:
+    selector:
+      name: "elasticsearch"
+    strategy:
+      type: "Rolling"
+    triggers:
+      - type: "ImageChange"
+        imageChangeParams:
+          automatic: true
+          containerNames:
+            - "elasticsearch"
+          from:
+            kind: "ImageStreamTag"
+            name: "elasticsearch:latest"
+    replicas: 1
+    template:
+      metadata:
+        name: "elasticsearch"
+        labels:
+          name: "elasticsearch"
+      spec:
+        containers:
+          - name: "elasticsearch"
+            image: "elasticsearch:latest"
+            ports:
+              - containerPort: 9200
+            volumeMounts:
+              - mountPath: /usr/share/elasticsearch/data/elasticsearch
+                name: data
+              - mountPath: /usr/share/elasticsearch/config
+                name: config
+        volumes:
+          - name: data
+            emptyDir: {}
+          - name: config
+            configMap:
+              name: elasticsearch-config
+              items:
+                - key: elasticsearch.yml
+                  path: elasticsearch.yml
+- kind: DeploymentConfig
+  apiVersion: v1
+  metadata:
+    name: "bpo-updater-fedmsg"
+  spec:
+    selector:
+      name: "bpo-updater-fedmsg"
+    strategy:
+      type: "Rolling"
+    triggers:
+      - type: "ImageChange"
+        imageChangeParams:
+          automatic: true
+          containerNames:
+            - "bpo-updater-fedmsg"
+          from:
+            kind: "ImageStreamTag"
+            name: "bpo-updater-fedmsg:latest"
+    replicas: 1
+    template:
+      metadata:
+        name: "bpo-updater-fedmsg"
+        labels:
+          name: "bpo-updater-fedmsg"
+      spec:
+        containers:
+          - name: "bpo-updater-fedmsg"
+            image: "bpo-updater-fedmsg:latest"
+            volumeMounts:
+              - mountPath: /etc/fedmsg.d/
+                name: configuration-volume
+        volumes:
+          - name: configuration-volume
+            configMap:
+              name: fedmsg-config
+              items:
+                - key: endpoits.py
+                  path: endpoits.py
+                - key: ssl.py
+                  path: ssl.py
+- kind: Pod
+  apiVersion: v1
+  metadata:
+    name: "bpo-updater-mappings"
+  spec:
+    containers:
+      - name: "bpo-updater-mappings"
+        image: "docker.io/asamalik/bpo-updater-mappings"
+        imagePullPolicy: Always
+    restartPolicy: Never
+- kind: ConfigMap
+  apiVersion: v1
+  metadata:
+    name: elasticsearch-config
+  data:
+    elasticsearch.yml: |
+      network.host: 0.0.0.0
+      # this might have some security issues: https://www.elastic.co/guide/en/elasticsearch/reference/current/modules-scripting.html#modules-scripting
+      script.engine.groovy.inline.aggs: on
+- kind: ConfigMap
+  apiVersion: v1
+  metadata:
+    name: fedmsg-config
+  data:
+    endpoits.py: |
+      config = dict(
+          # This is a dict of possible addresses from which fedmsg can send
+          # messages.  fedmsg.init(...) requires that a 'name' argument be passed
+          # to it which corresponds with one of the keys in this dict.
+          endpoints={
+              # Listening to the staging infra + the dev instance.
+              "fedmod": [
+                  "tcp://stg.fedoraproject.org:9940",
+                  "tcp://modularity.fedorainfracloud.org:4001",
+              ],
+          },
+      )
+    ssl.py: |
+      import os
+      import socket
+      SEP = os.path.sep
+      here = os.getcwd()
+      config = dict(
+          sign_messages=False,
+          validate_signatures=False,
+          # Use these implementations to sign and validate messages
+          crypto_backend='x509',
+          crypto_validate_backends=['x509'],
+          ssldir="/etc/pki/fedmsg",
+          crl_location="https://fedoraproject.org/fedmsg/crl.pem",
+          crl_cache="/var/run/fedmsg/crl.pem",
+          crl_cache_expiry=10,
+          ca_cert_location="https://fedoraproject.org/fedmsg/ca.crt",
+          ca_cert_cache="/var/run/fedmsg/ca.crt",
+          ca_cert_cache_expiry=0,  # Never expires
+          certnames={
+              # In prod/stg, map hostname to the name of the cert in ssldir.
+              # Unfortunately, we can't use socket.getfqdn()
+              #"app01.stg": "app01.stg.phx2.fedoraproject.org",
+          },
+          # A mapping of fully qualified topics to a list of cert names for which
+          # a valid signature is to be considered authorized.  Messages on topics not
+          # listed here are considered automatically authorized.
+          routing_policy={
+              # Only allow announcements from production if they're signed by a
+              # certain certificate.
+              "org.fedoraproject.prod.announce.announcement": [
+                  "announce-lockbox.phx2.fedoraproject.org",
+              ],
+          },
+          # Set this to True if you want messages to be dropped that aren't
+          # explicitly whitelisted in the routing_policy.
+          # When this is False, only messages that have a topic in the routing_policy
+          # but whose cert names aren't in the associated list are dropped; messages
+          # whose topics do not appear in the routing_policy are not dropped.
+          routing_nitpicky=False,
+      )
+
+
+
+parameters:
+- name: BPO_LOCAL_REPO
+  displayName: BPO git path
+  description: Local path to the BPO git repository
+  required: true
+  value: ''

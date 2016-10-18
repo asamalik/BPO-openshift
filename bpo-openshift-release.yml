@@ -2,7 +2,7 @@
 kind: Template
 apiVersion: v1
 metadata:
-  name: bpo
+  name: bpo-release
   annotations:
     description: Build Pipeline Overview UI for the Modularity project
     tags: bpo
